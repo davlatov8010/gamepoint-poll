@@ -23,20 +23,33 @@ let state = {
 
 let votedUsersSet = new Set();
 
+// Ma'lumotlarni yuklash
 function loadData() {
     if (fs.existsSync(DATA_FILE)) {
         try {
             const rawData = fs.readFileSync(DATA_FILE);
-            state = JSON.parse(rawData);
+            const savedData = JSON.parse(rawData);
+            state = { ...state, ...savedData };
             votedUsersSet = new Set(state.votedUsers || []);
-        } catch (e) { console.error("JSON Error:", e); }
+        } catch (e) { console.error("JSON yuklashda xato:", e); }
     }
 }
+
+// Ma'lumotlarni saqlash
 function saveData() {
     state.votedUsers = Array.from(votedUsersSet);
     fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2));
 }
+
 loadData();
+
+const storage = multer.diskStorage({
+    destination: './public/uploads/',
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage });
 
 let liveChat;
 
@@ -51,64 +64,100 @@ function broadcastUpdate() {
     });
 }
 
+// API: Nazorat paneli
 app.post('/api/control', (req, res) => {
     const { action, config } = req.body;
-    if (config) state.config = { ...state.config, ...config };
+    
+    if (config) {
+        state.config = { ...state.config, ...config };
+    }
 
-    if (action === 'start' && state.config.videoId) {
+    if (action === 'start') {
         state.isActive = true;
-        // Eski ulanishni tozalash
-        if (liveChat) { try { liveChat.stop(); } catch(e){} }
-        
-        try {
-            liveChat = new LiveChat({ liveId: state.config.videoId });
-            
-            liveChat.on('chat', (item) => {
-                if (!state.isActive || !item.message) return;
-                const msgText = item.message[0].text;
-                io.emit('chat_log', { author: item.author.name, msg: msgText });
+        if (state.config.videoId) {
+            // Avvalgi ulanishni to'xtatish
+            if (liveChat) { try { liveChat.stop(); } catch(e){} }
 
-                const uid = item.author.channelId;
-                if (!votedUsersSet.has(uid)) {
-                    const cleanMsg = msgText.trim().toUpperCase();
-                    if (cleanMsg === state.config.keyA.toUpperCase()) {
-                        state.votes.A++; votedUsersSet.add(uid);
-                        saveData(); broadcastUpdate();
-                    } else if (cleanMsg === state.config.keyB.toUpperCase()) {
-                        state.votes.B++; votedUsersSet.add(uid);
-                        saveData(); broadcastUpdate();
+            try {
+                liveChat = new LiveChat({ liveId: state.config.videoId });
+
+                liveChat.on('chat', (item) => {
+                    if (!state.isActive || !item.message) return;
+                    
+                    const msgText = item.message[0].text;
+                    const author = item.author.name;
+                    const uid = item.author.channelId;
+
+                    // Admin panelga xabarni yuborish
+                    io.emit('chat_log', { author, msg: msgText });
+
+                    if (!votedUsersSet.has(uid)) {
+                        const cleanMsg = msgText.trim().toUpperCase();
+                        if (cleanMsg === state.config.keyA.toUpperCase()) {
+                            state.votes.A++;
+                            votedUsersSet.add(uid);
+                            saveData();
+                            broadcastUpdate();
+                        } else if (cleanMsg === state.config.keyB.toUpperCase()) {
+                            state.votes.B++;
+                            votedUsersSet.add(uid);
+                            saveData();
+                            broadcastUpdate();
+                        }
                     }
-                }
-            });
+                });
 
-            liveChat.on('error', (err) => {
-                io.emit('chat_log', { author: 'TIZIM', msg: 'Ulanishda xato: ' + err.message });
-            });
+                liveChat.on('error', (err) => {
+                    io.emit('chat_log', { author: 'TIZIM', msg: 'Xato: ' + err.message });
+                });
 
-            // Ulanishni boshlash
-            liveChat.start()
-                .then(() => io.emit('chat_log', { author: 'TIZIM', msg: 'Muvaffaqiyatli ulandi!' }))
-                .catch(e => io.emit('chat_log', { author: 'TIZIM', msg: 'Start xatosi: ' + e.message }));
+                liveChat.start()
+                    .then(() => io.emit('chat_log', { author: 'TIZIM', msg: 'Muvaffaqiyatli ulandi! Chat kutilmoqda...' }))
+                    .catch(e => {
+                        io.emit('chat_log', { author: 'TIZIM', msg: 'YouTube xatosi: ' + e.message });
+                        state.isActive = false;
+                    });
 
-        } catch (e) {
-            io.emit('chat_log', { author: 'TIZIM', msg: 'Kritik xato: ' + e.message });
+            } catch (e) {
+                console.error("Chat ulanishda xato:", e);
+            }
         }
     } else if (action === 'pause') {
         state.isActive = false;
-        if (liveChat) liveChat.stop();
-        io.emit('chat_log', { author: 'TIZIM', msg: 'Toxtatildi.' });
+        if (liveChat) { liveChat.stop(); }
+        io.emit('chat_log', { author: 'TIZIM', msg: 'To\'xtatildi.' });
     } else if (action === 'restart') {
         state.votes = { A: 0, B: 0 };
         votedUsersSet.clear();
-        saveData(); broadcastUpdate();
+        saveData();
+        broadcastUpdate();
         io.emit('chat_log', { author: 'TIZIM', msg: 'Ovozlar nollandi.' });
     }
 
-    saveData(); broadcastUpdate();
+    saveData();
+    broadcastUpdate();
     res.sendStatus(200);
+});
+
+app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (req, res) => {
+    if (req.files['logoA']) state.config.logoA = '/uploads/' + req.files['logoA'][0].filename;
+    if (req.files['logoB']) state.config.logoB = '/uploads/' + req.files['logoB'][0].filename;
+    saveData();
+    broadcastUpdate();
+    res.json(state.config);
 });
 
 app.get('/api/state', (req, res) => res.json(state));
 
+app.post('/api/manual-vote', (req, res) => {
+    if (req.body.team === 'A') state.votes.A++;
+    else state.votes.B++;
+    saveData();
+    broadcastUpdate();
+    res.sendStatus(200);
+});
+
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`Server is running` ));
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
