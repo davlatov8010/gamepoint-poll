@@ -1,5 +1,5 @@
 const express = require('express');
-const multer = require('multer');
+const multer = require('multer'); // Xatolik shu yerda edi, tuzatildi
 const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -13,14 +13,13 @@ const io = socketIo(server);
 app.use(express.static('public'));
 app.use(express.json());
 
-// Ma'lumotlarni saqlash uchun fayl yo'li
+// Ma'lumotlarni saqlash fayli
 const DATA_FILE = './state.json';
 
-// Dastlabki holat
 let state = {
     isActive: false,
     votes: { A: 0, B: 0 },
-    votedUsers: [], // JSON faylda saqlash uchun Array qilamiz
+    votedUsers: [],
     config: {
         keyA: '!M',
         keyB: '!F',
@@ -32,30 +31,33 @@ let state = {
     }
 };
 
-// Fayldan ma'lumotlarni yuklash funksiyasi
+// Fayldan ma'lumotlarni yuklash
 function loadData() {
     if (fs.existsSync(DATA_FILE)) {
-        const rawData = fs.readFileSync(DATA_FILE);
-        const savedData = JSON.parse(rawData);
-        state = savedData;
-        // votedUsers ni yana Set ga aylantiramiz (tez ishlashi uchun)
-        state.votedUsersSet = new Set(state.votedUsers);
-        console.log("Ma'lumotlar fayldan yuklandi.");
+        try {
+            const rawData = fs.readFileSync(DATA_FILE);
+            const savedData = JSON.parse(rawData);
+            state = { ...state, ...savedData };
+            state.votedUsersSet = new Set(state.votedUsers || []);
+            console.log("Ma'lumotlar yuklandi.");
+        } catch (e) {
+            state.votedUsersSet = new Set();
+        }
     } else {
         state.votedUsersSet = new Set();
     }
 }
 
-// Ma'lumotlarni faylga saqlash funksiyasi
+// Faylga saqlash
 function saveData() {
-    state.votedUsers = Array.from(state.votedUsersSet);
-    const dataToSave = { ...state };
-    delete dataToSave.votedUsersSet; // Set ni JSON ga yozib bo'lmaydi
+    state.votedUsers = Array.from(state.votedUsersSet || []);
+    const { votedUsersSet, ...dataToSave } = state;
     fs.writeFileSync(DATA_FILE, JSON.stringify(dataToSave, null, 2));
 }
 
 loadData();
 
+// Rasmlarni yuklash sozlamasi
 const storage = multer.diskStorage({
     destination: './public/uploads/',
     filename: (req, file, cb) => {
@@ -76,10 +78,11 @@ function broadcastUpdate() {
         percentA: Math.round((state.votes.A / total) * 100),
         percentB: Math.round((state.votes.B / total) * 100),
         config: state.config,
-        votes: state.votes // Admin panelda sonlarni ko'rish uchun
+        votes: state.votes
     });
 }
 
+// API: Rasm yuklash
 app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (req, res) => {
     if (req.files.logoA) state.config.logoA = '/uploads/' + req.files.logoA[0].filename;
     if (req.files.logoB) state.config.logoB = '/uploads/' + req.files.logoB[0].filename;
@@ -88,6 +91,7 @@ app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (
     res.json(state.config);
 });
 
+// API: Boshqaruv
 app.post('/api/control', (req, res) => {
     const { action, videoId, config } = req.body;
     
@@ -95,7 +99,7 @@ app.post('/api/control', (req, res) => {
 
     if (action === 'start') {
         const targetId = videoId || state.config.videoId;
-        if (!targetId) return res.status(400).send("Video ID yo'q");
+        if (!targetId) return res.status(400).send("Video ID xato");
         
         state.config.videoId = targetId;
         state.isActive = true;
@@ -125,13 +129,13 @@ app.post('/api/control', (req, res) => {
             }
         });
         liveChat.start();
-        console.log(`Chat kuzatilyapti: ${targetId}`);
     } else if (action === 'pause') {
         state.isActive = false;
     } else if (action === 'restart') {
         state.votes = { A: 0, B: 0 };
         state.votedUsersSet.clear();
         state.votedUsers = [];
+        saveData();
     }
     
     saveData();
@@ -139,6 +143,7 @@ app.post('/api/control', (req, res) => {
     res.sendStatus(200);
 });
 
+// API: Qo'lda ovoz berish
 app.post('/api/manual-vote', (req, res) => {
     if (req.body.team === 'A') state.votes.A++;
     else state.votes.B++;
@@ -149,5 +154,5 @@ app.post('/api/manual-vote', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server ishga tushdi: http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
