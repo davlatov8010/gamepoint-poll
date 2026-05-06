@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>GAMEPOINT Admin</title>
+    <style>
+        body { background: #121212; color: white; font-family: sans-serif; padding: 20px; }
+        .box { background: #1e1e1e; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        input { width: 100%; padding: 10px; margin: 10px 0; background: #333; border: 1px solid #444; color: white; border-radius: 5px; box-sizing: border-box; }
+        button { padding: 12px; cursor: pointer; border: none; border-radius: 5px; font-weight: bold; transition: 0.2s; }
+        .btn-main { background: #07d3ff; color: black; width: 100%; font-size: 16px; margin-top: 10px; }
+        .controls { display: flex; gap: 10px; margin-top: 15px; }
+        .start { background: #28a745; color: white; flex: 1; }
+        .pause { background: #ffc107; flex: 1; }
+        .restart { background: #dc3545; color: white; flex: 1; }
+        .manual { background: #444; color: white; width: 100%; margin-top: 5px; }
+        h2 { color: #e100e4; margin-top: 0; border-left: 5px solid #07d3ff; padding-left: 10px; }
+        .status-bar { color: #aaa; font-size: 13px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div style="max-width: 800px; margin: 0 auto;">
+        <h2>GAMEPOINT BOSHQUROV PANELI</h2>
+        <div id="status" class="status-bar">Serverga ulanmoqda...</div>
+        
+        <div class="box">
+            <label>YouTube Video ID</label>
+            <input type="text" id="vid" placeholder="Masalan: WL8nDidiqHw">
+            <div class="controls">
+                <button class="start" onclick="control('start')">START</button>
+                <button class="pause" onclick="control('pause')">PAUSE</button>
+                <button class="restart" onclick="control('restart')">RESTART (0%)</button>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="box" style="border-top: 4px solid #07d3ff;">
+                <h3>Jamoa A (Chap)</h3>
+                <label>Nomi</label>
+                <input type="text" id="nameA">
+                <label>Logo yuklash</label>
+                <input type="file" id="fileA" accept="image/*">
+                <label>Ovoz berish kaliti</label>
+                <input type="text" id="keyA">
+                <button class="manual" onclick="vote('A')">+1 Qo'lda Ovoz</button>
+            </div>
+            <div class="box" style="border-top: 4px solid #e100e4;">
+                <h3>Jamoa B (O'ng)</h3>
+                <label>Nomi</label>
+                <input type="text" id="nameB">
+                <label>Logo yuklash</label>
+                <input type="file" id="fileB" accept="image/*">
+                <label>Ovoz berish kaliti</label>
+                <input type="text" id="keyB">
+                <button class="manual" onclick="vote('B')">+1 Qo'lda Ovoz</button>
+            </div>
+        </div>
+        
+        <button class="btn-main" onclick="save()">SOZLAMALARNI SAQLASH (SAVE)</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        // SAHIFA YUKLANGANDA SERVERDAN MA'LUMOTLARNI OLISH
+        socket.on('update', (data) => {
+            document.getElementById('status').innerText = "Holat: Ma'lumotlar yangilandi";
+            
+            // Faqat foydalanuvchi hozir kiritmayotgan bo'lsa (focus bo'lmasa) qiymatlarni to'ldiradi
+            if (document.activeElement.tagName !== 'INPUT') {
+                document.getElementById('vid').value = data.config.videoId || '';
+                document.getElementById('nameA').value = data.config.teamAName || '';
+                document.getElementById('nameB').value = data.config.teamBName || '';
+                document.getElementById('keyA').value = data.config.keyA || '!M';
+                document.getElementById('keyB').value = data.config.keyB || '!F';
+            }
+        });
+
+        async function save() {
+            const formData = new FormData();
+            const fA = document.getElementById('fileA').files[0];
+            const fB = document.getElementById('fileB').files[0];
+            
+            if (fA) formData.append('logoA', fA);
+            if (fB) formData.append('logoB', fB);
+            
+            // Rasmlar bo'lsa yuklaymiz
+            if (fA || fB) {
+                await fetch('/api/upload', { method: 'POST', body: formData });
+            }
+
+            const config = {
+                teamAName: document.getElementById('nameA').value,
+                teamBName: document.getElementById('nameB').value,
+                keyA: document.getElementById('keyA').value.toUpperCase(),
+                keyB: document.getElementById('keyB').value.toUpperCase(),
+                videoId: document.getElementById('vid').value
+            };
+
+            await fetch('/api/control', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ config })
+            });
+            alert("Barcha sozlamalar serverga saqlandi (state.json)!");
+        }
+
+        async function control(action) {
+            const videoId = document.getElementById('vid').value;
+            await fetch('/api/control', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action, videoId })
+            });
+        }
+
+        async function vote(team) {
+            await fetch('/api/manual-vote', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ team })
+            });
+        }
+    </script>
+</body>
+</html>
