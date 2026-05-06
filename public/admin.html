@@ -3,16 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <title>GAMEPOINT ADMIN</title>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
         body { background: #111; color: white; font-family: sans-serif; padding: 20px; }
         .box { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #333; }
-        input { width: 100%; padding: 10px; margin: 10px 0; background: #333; border: 1px solid #444; color: white; box-sizing: border-box; }
+        input { width: 100%; padding: 10px; margin: 10px 0; background: #333; border: 1px solid #444; color: white; box-sizing: border-box; border-radius: 4px; }
         button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; margin-right: 10px; }
         .btn-start { background: #28a745; color: white; }
         .btn-pause { background: #ffc107; }
         .btn-restart { background: #dc3545; color: white; }
-        .btn-save { background: #00d2ff; width: 100%; margin-top: 10px; color: black; }
-        .team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .btn-save { background: #00d2ff; width: 100%; color: black; margin-top: 10px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        #chat-console { height: 180px; background: #000; color: #0f0; font-family: monospace; overflow-y: auto; padding: 10px; border: 1px solid #444; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -20,24 +22,24 @@
 
     <div class="box">
         <label>YouTube Video ID</label>
-        <input type="text" id="videoId" placeholder="Masalan: WL8nDidiqHw">
+        <input type="text" id="videoId" placeholder="WL8nDidiqHw">
         <button class="btn-start" onclick="sendControl('start')">START</button>
         <button class="btn-pause" onclick="sendControl('pause')">PAUSE</button>
         <button class="btn-restart" onclick="sendControl('restart')">RESTART (0%)</button>
     </div>
 
-    <div class="team-grid">
+    <div class="grid">
         <div class="box" style="border-top: 4px solid #00d2ff;">
             <h3>Jamoa A</h3>
             <label>Nomi</label><input type="text" id="teamAName">
-            <label>Logo yuklash</label><input type="file" id="logoA">
+            <label>Logo</label><input type="file" id="logoA">
             <label>Kalit so'z</label><input type="text" id="keyA">
             <button onclick="manualVote('A')">+1 Ovoz</button>
         </div>
         <div class="box" style="border-top: 4px solid #e100e4;">
             <h3>Jamoa B</h3>
             <label>Nomi</label><input type="text" id="teamBName">
-            <label>Logo yuklash</label><input type="file" id="logoB">
+            <label>Logo</label><input type="file" id="logoB">
             <label>Kalit so'z</label><input type="text" id="keyB">
             <button onclick="manualVote('B')">+1 Ovoz</button>
         </div>
@@ -45,8 +47,14 @@
 
     <button class="btn-save" onclick="saveAll()">SOZLAMALARNI SAQLASH (SAVE)</button>
 
+    <div class="box">
+        <h3>CHAT KONSOLI</h3>
+        <div id="chat-console">-- Chat monitoringi tayyor --</div>
+    </div>
+
     <script>
-        // Sahifa ochilganda oxirgi sozlamalarni serverdan yuklab oladi
+        const socket = io();
+
         window.onload = async () => {
             const res = await fetch('/api/state');
             const data = await res.json();
@@ -57,21 +65,27 @@
             document.getElementById('keyB').value = data.config.keyB || '';
         };
 
+        socket.on('chat_log', (data) => {
+            const consoleDiv = document.getElementById('chat-console');
+            const msg = document.createElement('div');
+            msg.innerHTML = `<span style="color: #888;">[${new Date().toLocaleTimeString()}]</span> <b>${data.author}:</b> ${data.msg}`;
+            consoleDiv.appendChild(msg);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        });
+
         async function sendControl(action) {
             const config = {
                 teamAName: document.getElementById('teamAName').value,
                 teamBName: document.getElementById('teamBName').value,
                 keyA: document.getElementById('keyA').value,
                 keyB: document.getElementById('keyB').value,
-                videoId: document.getElementById('videoId').value
+                videoId: document.getElementById('videoId').value.trim()
             };
-
             await fetch('/api/control', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ action, config })
             });
-            alert("Buyruq: " + action.toUpperCase());
         }
 
         async function manualVote(team) {
@@ -83,29 +97,13 @@
         }
 
         async function saveAll() {
-            const config = {
-                teamAName: document.getElementById('teamAName').value,
-                teamBName: document.getElementById('teamBName').value,
-                keyA: document.getElementById('keyA').value,
-                keyB: document.getElementById('keyB').value,
-                videoId: document.getElementById('videoId').value
-            };
-
-            await fetch('/api/control', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ action: 'update', config })
-            });
-
+            await sendControl('update');
             const formData = new FormData();
             const lA = document.getElementById('logoA').files[0];
             const lB = document.getElementById('logoB').files[0];
             if (lA) formData.append('logoA', lA);
             if (lB) formData.append('logoB', lB);
-
-            if (lA || lB) {
-                await fetch('/api/upload', { method: 'POST', body: formData });
-            }
+            if (lA || lB) await fetch('/api/upload', { method: 'POST', body: formData });
             alert("Saqlandi!");
             location.reload();
         }
