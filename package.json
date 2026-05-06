@@ -1,7 +1,7 @@
 {
   "name": "gamepoint-vote",
   "version": "1.0.0",
-  "description": "YouTube Live Poll Overlay for GAMEPOINT",
+  "description": "YouTube Live Poll Overlay",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
