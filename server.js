@@ -52,9 +52,17 @@ function broadcastUpdate() {
         percentA: Math.round((state.votes.A / total) * 100),
         percentB: Math.round((state.votes.B / total) * 100),
         config: state.config,
+        votes: state.votes,
         isActive: state.isActive
     });
 }
+
+app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (req, res) => {
+    if (req.files['logoA']) state.config.logoA = '/uploads/' + req.files['logoA'][0].filename;
+    if (req.files['logoB']) state.config.logoB = '/uploads/' + req.files['logoB'][0].filename;
+    saveData(); broadcastUpdate();
+    res.json(state.config);
+});
 
 app.post('/api/control', (req, res) => {
     const { action, config } = req.body;
@@ -68,24 +76,31 @@ app.post('/api/control', (req, res) => {
             
             liveChat.on('chat', (item) => {
                 if (!state.isActive || !item.message) return;
-                const msg = item.message[0].text.trim().toUpperCase();
+                const msgText = item.message[0].text;
+                const author = item.author.name;
                 const uid = item.author.channelId;
+
+                // Admin panelga chat logini yuborish
+                io.emit('chat_log', { author, msg: msgText });
+
                 if (!votedUsersSet.has(uid)) {
-                    if (msg === state.config.keyA.toUpperCase()) { state.votes.A++; votedUsersSet.add(uid); }
-                    else if (msg === state.config.keyB.toUpperCase()) { state.votes.B++; votedUsersSet.add(uid); }
-                    saveData(); broadcastUpdate();
+                    const cleanMsg = msgText.trim().toUpperCase();
+                    if (cleanMsg === state.config.keyA.toUpperCase()) {
+                        state.votes.A++; votedUsersSet.add(uid);
+                        saveData(); broadcastUpdate();
+                    } else if (cleanMsg === state.config.keyB.toUpperCase()) {
+                        state.votes.B++; votedUsersSet.add(uid);
+                        saveData(); broadcastUpdate();
+                    }
                 }
             });
 
             liveChat.on('error', (err) => { 
-                console.error("Chat Error:", err);
+                io.emit('chat_log', { author: 'TIZIM', msg: 'Xatolik: ' + err.message });
                 state.isActive = false;
             });
 
-            liveChat.start().catch(e => {
-                console.error("Start failed:", e);
-                state.isActive = false;
-            });
+            liveChat.start().catch(e => console.error("Start failed:", e));
         } catch (e) { console.error("Crash prevention:", e); }
     } else if (action === 'pause') {
         state.isActive = false;
@@ -93,10 +108,10 @@ app.post('/api/control', (req, res) => {
     } else if (action === 'restart') {
         state.votes = { A: 0, B: 0 };
         votedUsersSet.clear();
+        saveData(); broadcastUpdate();
     }
 
-    saveData();
-    broadcastUpdate();
+    saveData(); broadcastUpdate();
     res.sendStatus(200);
 });
 
