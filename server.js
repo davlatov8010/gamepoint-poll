@@ -15,6 +15,7 @@ app.use(express.json());
 
 const DATA_FILE = './state.json';
 
+// Boshlang'ich holat
 let state = {
     isActive: false,
     votes: { A: 0, B: 0 },
@@ -32,6 +33,7 @@ let state = {
 
 let votedUsersSet = new Set();
 
+// Ma'lumotlarni yuklash funksiyasi
 function loadData() {
     if (fs.existsSync(DATA_FILE)) {
         try {
@@ -39,10 +41,11 @@ function loadData() {
             const savedData = JSON.parse(rawData);
             state = { ...state, ...savedData };
             votedUsersSet = new Set(state.votedUsers || []);
-        } catch (e) { console.error("Data load error", e); }
+        } catch (e) { console.error("JSON yuklashda xato:", e); }
     }
 }
 
+// Ma'lumotlarni saqlash funksiyasi
 function saveData() {
     state.votedUsers = Array.from(votedUsersSet);
     fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2));
@@ -50,6 +53,7 @@ function saveData() {
 
 loadData();
 
+// Rasm yuklash mexanizmi
 const storage = multer.diskStorage({
     destination: './public/uploads/',
     filename: (req, file, cb) => {
@@ -75,17 +79,22 @@ function broadcastUpdate() {
     });
 }
 
+// Rasm yuklash API
 app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (req, res) => {
-    if (req.files['logoA']) state.config.logoA = '/uploads/' + req.files['logoA'][0].filename;
-    if (req.files['logoB']) state.config.logoB = '/uploads/' + req.files['logoB'][0].filename;
+    if (req.files && req.files['logoA']) state.config.logoA = '/uploads/' + req.files['logoA'][0].filename;
+    if (req.files && req.files['logoB']) state.config.logoB = '/uploads/' + req.files['logoB'][0].filename;
     saveData();
     broadcastUpdate();
     res.json(state.config);
 });
 
+// Boshqaruv API (START, PAUSE, RESTART, UPDATE)
 app.post('/api/control', (req, res) => {
     const { action, config } = req.body;
-    if (config) state.config = { ...state.config, ...config };
+    
+    if (config) {
+        state.config = { ...state.config, ...config };
+    }
 
     if (action === 'start') {
         state.isActive = true;
@@ -114,16 +123,20 @@ app.post('/api/control', (req, res) => {
         }
     } else if (action === 'pause') {
         state.isActive = false;
+        if (liveChat) { try { liveChat.stop(); } catch(e){} }
     } else if (action === 'restart') {
         state.votes = { A: 0, B: 0 };
         votedUsersSet.clear();
+        state.votedUsers = [];
         saveData();
     }
+
     saveData();
     broadcastUpdate();
     res.sendStatus(200);
 });
 
+// Qo'lda ovoz berish API
 app.post('/api/manual-vote', (req, res) => {
     if (req.body.team === 'A') state.votes.A++;
     else state.votes.B++;
@@ -132,5 +145,10 @@ app.post('/api/manual-vote', (req, res) => {
     res.sendStatus(200);
 });
 
+// Joriy holatni olish API (Admin panel yuklanganda)
+app.get('/api/state', (req, res) => {
+    res.json(state);
+});
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server port: ${PORT}`));
+server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
