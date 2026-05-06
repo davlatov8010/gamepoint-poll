@@ -1,5 +1,5 @@
 const express = require('express');
-const multer = require('multer'); // Xatolik shu yerda edi, tuzatildi
+const multer = require('multer');
 const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -13,7 +13,6 @@ const io = socketIo(server);
 app.use(express.static('public'));
 app.use(express.json());
 
-// Ma'lumotlarni saqlash fayli
 const DATA_FILE = './state.json';
 
 let state = {
@@ -31,33 +30,26 @@ let state = {
     }
 };
 
-// Fayldan ma'lumotlarni yuklash
+let votedUsersSet = new Set();
+
 function loadData() {
     if (fs.existsSync(DATA_FILE)) {
         try {
             const rawData = fs.readFileSync(DATA_FILE);
             const savedData = JSON.parse(rawData);
             state = { ...state, ...savedData };
-            state.votedUsersSet = new Set(state.votedUsers || []);
-            console.log("Ma'lumotlar yuklandi.");
-        } catch (e) {
-            state.votedUsersSet = new Set();
-        }
-    } else {
-        state.votedUsersSet = new Set();
+            votedUsersSet = new Set(state.votedUsers || []);
+        } catch (e) { console.error("Data load error", e); }
     }
 }
 
-// Faylga saqlash
 function saveData() {
-    state.votedUsers = Array.from(state.votedUsersSet || []);
-    const { votedUsersSet, ...dataToSave } = state;
-    fs.writeFileSync(DATA_FILE, JSON.stringify(dataToSave, null, 2));
+    state.votedUsers = Array.from(votedUsersSet);
+    fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2));
 }
 
 loadData();
 
-// Rasmlarni yuklash sozlamasi
 const storage = multer.diskStorage({
     destination: './public/uploads/',
     filename: (req, file, cb) => {
@@ -78,72 +70,60 @@ function broadcastUpdate() {
         percentA: Math.round((state.votes.A / total) * 100),
         percentB: Math.round((state.votes.B / total) * 100),
         config: state.config,
-        votes: state.votes
+        votes: state.votes,
+        isActive: state.isActive
     });
 }
 
-// API: Rasm yuklash
 app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (req, res) => {
-    if (req.files.logoA) state.config.logoA = '/uploads/' + req.files.logoA[0].filename;
-    if (req.files.logoB) state.config.logoB = '/uploads/' + req.files.logoB[0].filename;
+    if (req.files['logoA']) state.config.logoA = '/uploads/' + req.files['logoA'][0].filename;
+    if (req.files['logoB']) state.config.logoB = '/uploads/' + req.files['logoB'][0].filename;
     saveData();
     broadcastUpdate();
     res.json(state.config);
 });
 
-// API: Boshqaruv
 app.post('/api/control', (req, res) => {
-    const { action, videoId, config } = req.body;
-    
+    const { action, config } = req.body;
     if (config) state.config = { ...state.config, ...config };
 
     if (action === 'start') {
-        const targetId = videoId || state.config.videoId;
-        if (!targetId) return res.status(400).send("Video ID xato");
-        
-        state.config.videoId = targetId;
         state.isActive = true;
-        
-        if (liveChat) { try { liveChat.stop(); } catch(e) {} }
-        
-        liveChat = new LiveChat({ liveId: targetId });
-        liveChat.on('chat', (item) => {
-            if (!state.isActive) return;
-            if (!item.message || !item.message[0] || !item.message[0].text) return;
-
-            const userMsg = item.message.map(m => m.text).join("").trim().toUpperCase();
-            const userId = item.author.channelId;
-
-            if (!state.votedUsersSet.has(userId)) {
-                if (userMsg === state.config.keyA.toUpperCase()) {
-                    state.votes.A++;
-                    state.votedUsersSet.add(userId);
-                    saveData();
-                    broadcastUpdate();
-                } else if (userMsg === state.config.keyB.toUpperCase()) {
-                    state.votes.B++;
-                    state.votedUsersSet.add(userId);
-                    saveData();
-                    broadcastUpdate();
+        if (state.config.videoId) {
+            if (liveChat) { try { liveChat.stop(); } catch(e){} }
+            liveChat = new LiveChat({ liveId: state.config.videoId });
+            liveChat.on('chat', (item) => {
+                if (!state.isActive) return;
+                const msg = item.message[0].text.trim().toUpperCase();
+                const uid = item.author.channelId;
+                if (!votedUsersSet.has(uid)) {
+                    if (msg === state.config.keyA.toUpperCase()) {
+                        state.votes.A++;
+                        votedUsersSet.add(uid);
+                        saveData();
+                        broadcastUpdate();
+                    } else if (msg === state.config.keyB.toUpperCase()) {
+                        state.votes.B++;
+                        votedUsersSet.add(uid);
+                        saveData();
+                        broadcastUpdate();
+                    }
                 }
-            }
-        });
-        liveChat.start();
+            });
+            liveChat.start();
+        }
     } else if (action === 'pause') {
         state.isActive = false;
     } else if (action === 'restart') {
         state.votes = { A: 0, B: 0 };
-        state.votedUsersSet.clear();
-        state.votedUsers = [];
+        votedUsersSet.clear();
         saveData();
     }
-    
     saveData();
     broadcastUpdate();
     res.sendStatus(200);
 });
 
-// API: Qo'lda ovoz berish
 app.post('/api/manual-vote', (req, res) => {
     if (req.body.team === 'A') state.votes.A++;
     else state.votes.B++;
@@ -153,6 +133,4 @@ app.post('/api/manual-vote', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server port: ${PORT}`));
