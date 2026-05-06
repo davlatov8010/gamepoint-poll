@@ -1,0 +1,14 @@
+{
+  "isActive": false,
+  "votes": { "A": 0, "B": 0 },
+  "votedUsers": [],
+  "config": {
+    "keyA": "!M",
+    "keyB": "!F",
+    "teamAName": "Team Alpha",
+    "teamBName": "Team Beta",
+    "logoA": "https://via.placeholder.com/100",
+    "logoB: "https://via.placeholder.com/100",
+    "videoId": ""
+  }
+}
