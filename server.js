@@ -14,20 +14,11 @@ app.use(express.static('public'));
 app.use(express.json());
 
 const DATA_FILE = './state.json';
-
 let state = {
     isActive: false,
     votes: { A: 0, B: 0 },
     votedUsers: [],
-    config: {
-        keyA: '!M',
-        keyB: '!F',
-        teamAName: 'Team Alpha',
-        teamBName: 'Team Beta',
-        logoA: 'https://via.placeholder.com/100',
-        logoB: 'https://via.placeholder.com/100',
-        videoId: ''
-    }
+    config: { keyA: '!M', keyB: '!F', teamAName: 'Team Alpha', teamBName: 'Team Beta', logoA: '', logoB: '', videoId: '' }
 };
 
 let votedUsersSet = new Set();
@@ -38,30 +29,22 @@ function loadData() {
             const rawData = fs.readFileSync(DATA_FILE);
             state = JSON.parse(rawData);
             votedUsersSet = new Set(state.votedUsers || []);
-        } catch (e) { console.error("JSON yuklashda xato:", e); }
+        } catch (e) { console.error("JSON Error:", e); }
     }
 }
-
 function saveData() {
     state.votedUsers = Array.from(votedUsersSet);
     fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2));
 }
-
 loadData();
 
 const storage = multer.diskStorage({
     destination: './public/uploads/',
-    filename: (req, file, cb) => {
-        cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
-    }
+    filename: (req, file, cb) => { cb(null, Date.now() + path.extname(file.originalname)); }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
 
 let liveChat;
-
-io.on('connection', (socket) => {
-    broadcastUpdate();
-});
 
 function broadcastUpdate() {
     const total = state.votes.A + state.votes.B || 1;
@@ -69,75 +52,59 @@ function broadcastUpdate() {
         percentA: Math.round((state.votes.A / total) * 100),
         percentB: Math.round((state.votes.B / total) * 100),
         config: state.config,
-        votes: state.votes,
         isActive: state.isActive
     });
 }
 
-app.post('/api/upload', upload.fields([{ name: 'logoA' }, { name: 'logoB' }]), (req, res) => {
-    if (req.files['logoA']) state.config.logoA = '/uploads/' + req.files['logoA'][0].filename;
-    if (req.files['logoB']) state.config.logoB = '/uploads/' + req.files['logoB'][0].filename;
-    saveData();
-    broadcastUpdate();
-    res.json(state.config);
-});
-
 app.post('/api/control', (req, res) => {
     const { action, config } = req.body;
-    
-    // Ma'lumotlar o'chib ketmasligi uchun joriy config bilan birlashtiramiz
-    if (config) {
-        state.config = { ...state.config, ...config };
-    }
+    if (config) state.config = { ...state.config, ...config };
 
-    if (action === 'start') {
+    if (action === 'start' && state.config.videoId) {
         state.isActive = true;
-        if (state.config.videoId) {
-            if (liveChat) { try { liveChat.stop(); } catch(e){} }
+        try {
+            if (liveChat) { liveChat.stop(); }
             liveChat = new LiveChat({ liveId: state.config.videoId });
+            
             liveChat.on('chat', (item) => {
-                if (!state.isActive) return;
+                if (!state.isActive || !item.message) return;
                 const msg = item.message[0].text.trim().toUpperCase();
                 const uid = item.author.channelId;
                 if (!votedUsersSet.has(uid)) {
-                    if (msg === state.config.keyA.toUpperCase()) {
-                        state.votes.A++;
-                        votedUsersSet.add(uid);
-                        saveData();
-                        broadcastUpdate();
-                    } else if (msg === state.config.keyB.toUpperCase()) {
-                        state.votes.B++;
-                        votedUsersSet.add(uid);
-                        saveData();
-                        broadcastUpdate();
-                    }
+                    if (msg === state.config.keyA.toUpperCase()) { state.votes.A++; votedUsersSet.add(uid); }
+                    else if (msg === state.config.keyB.toUpperCase()) { state.votes.B++; votedUsersSet.add(uid); }
+                    saveData(); broadcastUpdate();
                 }
             });
-            liveChat.start();
-        }
+
+            liveChat.on('error', (err) => { 
+                console.error("Chat Error:", err);
+                state.isActive = false;
+            });
+
+            liveChat.start().catch(e => {
+                console.error("Start failed:", e);
+                state.isActive = false;
+            });
+        } catch (e) { console.error("Crash prevention:", e); }
     } else if (action === 'pause') {
         state.isActive = false;
+        if (liveChat) liveChat.stop();
     } else if (action === 'restart') {
         state.votes = { A: 0, B: 0 };
         votedUsersSet.clear();
-        state.votedUsers = [];
-        saveData();
     }
 
-    saveData();
-    broadcastUpdate();
-    res.sendStatus(200);
-});
-
-app.post('/api/manual-vote', (req, res) => {
-    if (req.body.team === 'A') state.votes.A++;
-    else state.votes.B++;
     saveData();
     broadcastUpdate();
     res.sendStatus(200);
 });
 
 app.get('/api/state', (req, res) => res.json(state));
+app.post('/api/manual-vote', (req, res) => {
+    if (req.body.team === 'A') state.votes.A++; else state.votes.B++;
+    saveData(); broadcastUpdate(); res.sendStatus(200);
+});
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => console.log(`Server: ${PORT}`));
